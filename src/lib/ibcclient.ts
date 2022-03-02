@@ -62,6 +62,9 @@ import cloneDeep from 'lodash/cloneDeep';
 import Long from 'long';
 
 import { Logger, NoopLogger } from './logger';
+import {getRequestSignatureHeaders} from './meraki/merakiSignature';
+import type {GetHeadersParams} from './meraki/merakiSignature';
+import MerakiHttpClient from './meraki/merakihttpclient';
 import { IbcExtension, setupIbcExtension } from './queries/ibc';
 import {
   Ack,
@@ -185,6 +188,12 @@ export type IbcClientOptions = SigningStargateClientOptions & {
   gasPrice: GasPrice;
 };
 
+class MerakiSigningStargateClient extends SigningStargateClient {
+  constructor(tmClient: Tendermint34Client | undefined, signer: OfflineSigner, options: SigningStargateClientOptions) {
+    super(tmClient, signer, options)
+  }
+}
+
 export class IbcClient {
   public readonly gasPrice: GasPrice;
   public readonly sign: SigningStargateClient;
@@ -211,12 +220,14 @@ export class IbcClient {
       ...options,
       registry: ibcRegistry(),
     };
-    const signingClient = await SigningStargateClient.connectWithSigner(
-      endpoint,
-      signer,
-      mergedOptions
-    );
-    const tmClient = await Tendermint34Client.connect(endpoint);
+
+    const httpClient = new MerakiHttpClient(endpoint, {
+      getHeaders: async (params: GetHeadersParams) => await getRequestSignatureHeaders(signer, params)
+    });
+
+    const tmClient = await Tendermint34Client.create(httpClient);
+    const signingClient = new MerakiSigningStargateClient(tmClient, signer, mergedOptions);
+
     const chainId = await signingClient.getChainId();
     return new IbcClient(
       signingClient,
